@@ -1,0 +1,93 @@
+name: Build .dat files
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/README.md"
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+        with:
+          path: publish
+          
+      - name: Checkout geosite
+        uses: actions/checkout@v4
+        with:
+          repository: unidcml/domain-list-community
+          path: geosite
+          
+      - name: Checkout geoip
+        uses: actions/checkout@v4
+        with:
+          repository: unidcml/geoip
+          path: geoip
+
+      - name: Set environment variables
+        run: |
+          echo "RELEASE_NAME=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+          echo "TAG_NAME=$(date +%Y%m%d%H%M%S)" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Setup Go for geosite
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: geosite/go.mod
+
+      - name: Download domains
+        run: |
+          cd geosite
+          mkdir -p input
+          curl -L "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-dnsmasq-nfset.lst" -o input/inside
+          curl -L "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/outside-dnsmasq-nfset.lst" -o input/outside
+          curl -L "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Ukraine/inside-dnsmasq-nfset.lst" -o input/ukraine
+          sed -i 's|nftset=/||;s|/4#inet#fw4#vpn_domains||' input/*
+
+      - name: Build allow-domains.dat
+        run: |
+          cd geosite
+          go run ./ --datapath=./input --outputdir=../publish --outputname=allow-domains.dat
+
+      - name: Setup Go for geoip
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: geoip/go.mod
+
+      - name: Download subnets
+        run: |
+          cd geoip
+          mkdir -p input
+          for domain in Discord Meta Twitter; do
+            curl -L "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv4/${domain}.lst" -o input/${domain,,}
+            curl -L "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Subnets/IPv6/${domain}.lst" >> input/${domain,,}
+          done
+
+      - name: Build subnets.dat
+        run: |
+          cd geoip
+          go run ./
+          mv output/geoip.dat ../publish/subnets.dat
+          
+      - name: Generate hashes
+        run: |
+          cd publish
+          sha256sum allow-domains.dat > allow-domains.dat.sha256sum
+          sha256sum subnets.dat > subnets.dat.sha256sum
+
+      - name: Release and upload assets
+        run: |
+          cd publish
+          gh release create ${{ env.TAG_NAME }} -t ${{ env.RELEASE_NAME }} ./*.dat ./*.dat.sha256sum
+        env:
+          GH_TOKEN: ${{ github.token }}
