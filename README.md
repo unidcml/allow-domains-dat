@@ -17,7 +17,7 @@
     "rules": [
       {
         "domain": ["ext:allow-domains.dat:inside"],
-        "outboundTag": "block",
+        "outboundTag": "block"
       },
       {
         "ip": ["ext:subnets.dat:discord"],
